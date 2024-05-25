@@ -10,7 +10,3 @@ Python 3.6.
 Anaconda contains all the required packages.
 
 PyTorch version 1.10.0.
-
-
-
-Put the data folder inside the root folder, modify the data entry in run.sh accordingly. The datasets are available here.
