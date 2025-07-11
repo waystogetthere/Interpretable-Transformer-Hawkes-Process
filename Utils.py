@@ -101,44 +101,83 @@ def log_likelihood(model, enc_output, event_time, event_types):
 
     return event_ll, non_event_ll
 
-
-
 def gen_Xne(opt, event_time, event_type):
+    n, l = event_time.shape
 
-        # Step 1: Left shifted.
-        # find the min event time and max event time. Note that padding entry 0 is excluded
-        sorted, _ = torch.sort(torch.unique(event_time))
+    # Step 1: identify padding
+    # Padding = 0 except for the first column (t=0 is allowed for first event)
+    padding_mask = (event_time == 0.0) & (torch.arange(l).expand(n, l).to(event_time.device) != 0)
+
+    # Step 2: Get min and max event time excluding padding
+    # We keep event_time[:, 0] even if it is 0.0
+    valid_mask = ~padding_mask
+    min_time = event_time[valid_mask].min()
+    max_time = event_time[valid_mask].max()
+
+    # Step 3: Shift event time so that min_time becomes 0
+    shifted_time = event_time.clone()
+    shifted_time[valid_mask] = shifted_time[valid_mask] - min_time
+    shifted_time[padding_mask] = -1.0  # Mark padding temporarily as -1
+
+    # Step 4: Generate dummy time and dummy type
+    dummy_time = torch.arange(1e-1, float(max_time - min_time), 1e-1).to(opt.device)
+    dummy_time = dummy_time.repeat(n, 1)  # [n, m]
+    dummy_type = torch.ones_like(dummy_time) * (-1)
+
+    # Step 5: Resolve collisions
+    for i in range(n):
+        dup = torch.isin(dummy_time[i], shifted_time[i])
+        dummy_time[i][dup] += 1e-3
+
+    # Step 6: Concatenate and sort
+    all_time = torch.cat((shifted_time, dummy_time), dim=1)
+    all_type = torch.cat((event_type, dummy_type), dim=1)
+
+    sorted_time, indices = all_time.sort(dim=1)
+    sorted_type = torch.gather(all_type, dim=1, index=indices).long()
+
+    # Step 7: Set padding back to 0
+    sorted_time[sorted_time < 0] = 0.0
+
+    return sorted_time.to(opt.device), sorted_type.to(opt.device)
+
+
+# def gen_Xne(opt, event_time, event_type):
+
+#         # Step 1: Left shifted.
+#         # find the min event time and max event time. Note that padding entry 0 is excluded
+#         sorted, _ = torch.sort(torch.unique(event_time))
         
-        min = sorted[1] if sorted[0] == 0 else sorted[0]
-        max = sorted[-1]
+#         min = sorted[1] if sorted[0] == 0 else sorted[0]
+#         max = sorted[-1]
 
-        event_time[event_time == 0.0] = 42 * 10 ** 6
+#         event_time[event_time == 0.0] = 42 * 10 ** 6
 
-        # Manually construct Non-Event Matrix.
+#         # Manually construct Non-Event Matrix.
 
-        event_time = event_time - min
-        dummy_time = torch.arange(1e-1, float(max-min), 1e-1).to(opt.device).repeat(event_time.shape[0],1)  # Non-Event Time Point
+#         event_time = event_time - min
+#         dummy_time = torch.arange(1e-1, float(max-min), 1e-1).to(opt.device).repeat(event_time.shape[0],1)  # Non-Event Time Point
 
-        #dummy_time = torch.arange(min, max, 1e-1).to(opt.device).repeat(event_time.shape[0],1)  # Non-Event Time Point
+#         #dummy_time = torch.arange(min, max, 1e-1).to(opt.device).repeat(event_time.shape[0],1)  # Non-Event Time Point
         
-        dummy_type = torch.ones_like(dummy_time) * (-1)  # Set the "Type" to be -1 at Non-Event Time Point
-        for i in torch.unique(dummy_time):
-            if i in event_time:
-                # print('duplicate time Found! {}'.format(i)) # If conflict found between event time and Non-Event Time point
-                dummy_time[dummy_time == i] = i + 1e-3  # shift the Non-Event Time point
+#         dummy_type = torch.ones_like(dummy_time) * (-1)  # Set the "Type" to be -1 at Non-Event Time Point
+#         for i in torch.unique(dummy_time):
+#             if i in event_time:
+#                 # print('duplicate time Found! {}'.format(i)) # If conflict found between event time and Non-Event Time point
+#                 dummy_time[dummy_time == i] = i + 1e-3  # shift the Non-Event Time point
 
-        # Combination
-        new_event_time = torch.cat((event_time, dummy_time), dim=1)
-        new_event_type = torch.cat((event_type, dummy_type), dim=1)
+#         # Combination
+#         new_event_time = torch.cat((event_time, dummy_time), dim=1)
+#         new_event_type = torch.cat((event_type, dummy_type), dim=1)
 
-        sorted_time, indice = new_event_time.sort()
-        sorted_types = torch.zeros_like(new_event_type)
-        for i in range(new_event_type.shape[0]):
-            sorted_types[i, :] = new_event_type[i][indice[i]]
-        sorted_types = sorted_types.long()
-        sorted_time[sorted_time > 10 ** 6] = 0  # set padding entry to be 0 at Time Matrix
-        sorted_time.to(opt.device)
-        sorted_types.to(opt.device)
+#         sorted_time, indice = new_event_time.sort()
+#         sorted_types = torch.zeros_like(new_event_type)
+#         for i in range(new_event_type.shape[0]):
+#             sorted_types[i, :] = new_event_type[i][indice[i]]
+#         sorted_types = sorted_types.long()
+#         sorted_time[sorted_time > 10 ** 6] = 0  # set padding entry to be 0 at Time Matrix
+#         sorted_time.to(opt.device)
+#         sorted_types.to(opt.device)
 
-        return sorted_time, sorted_types
+#         return sorted_time, sorted_types
 
